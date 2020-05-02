@@ -1,0 +1,715 @@
+function result= SetShiftDifficulty_final( params )
+% Attentional set shifting task in which difficulty of both ID/ED shifts is
+% manipulated by means of increasing the amount of dimensions (ED) or
+% features within those dimensions
+%
+% Intended for either a drug study or a patient study (BG/PFC lesions) with
+% the possibility of testing a RL model
+
+%% To do/Prospects
+
+%Test/pilot
+%test in sample with PFC lesions/drug manipulation?
+%Add randomblockbreaks?
+%Implement WCST version
+%Add motivational manipulation?
+
+
+%% Subject info prompt and folder organisation
+prompt = { 'Participant ID';'Session (1/2)';'Pilot(0/1)'};
+answers = inputdlg(prompt);
+if all(cellfun(@isempty,answers))
+    ex.isPilot = 1;
+    ex.ppID = str2double('999');
+    ex.sessionNumber = 1;
+else
+    ex.ppID = str2double(upper(answers{1}));
+    ex.sessionNumber = str2double(answers{2});
+    ex.isPilot = str2double(answers{3});
+end
+
+%Result folder set-up
+
+% resultFolder = 'C:/Users/matth/OneDrive/Documenten/UGent stuff/Internship Oxford/Experiments/Results/unsorted/';%save copy of results here
+resultFolder = 'Results/unsorted/';
+if exist(resultFolder,'dir')==7
+    ex.resultFolder = resultFolder;
+else%if that doesn't exist, save in cwd
+    ex.resultFolder = './';
+end
+%% SET-UP | CHECK BEFORE RUNNING!!!!
+% ex: experiment parameters
+ex.type          = 'Attentional Set Shifting Task with difficulty manipulation';
+ex.practiceTrials      = 0;
+ex.useEyelink          = 0;
+ex.skipScreenCheck     = 1;
+ex.displayNumber       = 0;  % for multiple monitors
+ex.useMouse            = 1 ; % show the mouse cursor while touch/keyboard?
+ex.deviceNumber        = -1; % default?
+
+%keyboard
+KbName('UnifyKeyNames')
+ex.exitKey = KbName('ESCAPE');
+ex.keys = KbName({'LeftArrow','RightArrow'}); %For using Keyboard responses
+
+%exp type manipulations
+ex.breakBlocksRandomly = false; % T = probabilistic shifts/phase length?
+ex.probReward          = true; % T: probabilistic rewards, F: deterministic
+ex.shuffleDF           = true;  % T:randomised shape/feature indices based ppID? - F:pre-set (cf. infra)
+
+if ex.isPilot == 1    % for pilotting purposes, counterbalance repeat/no repeat
+    ex.repeatFeatures = mod(ex.ppID+ex.sessionNumber,2);
+
+%     if mod(ex.ppID+ex.sessionNumber,2)
+%         ex.repeatFeatures      = true; % Whether to have repeated features in two Ss or only uniques
+%     else
+%         ex.repeatFeatures      = false;
+%     end
+    ex.DEBUG_FAST_RUN      = false;  % for fast debugging mode
+    ex.simulateAgent       = false; % T:Stimuli chosen randomly
+else
+    ex.repeatFeatures      = true; % Whether to have repeated features in two Ss or only uniques
+    ex.DEBUG_FAST_RUN      = false;  % for fast debugging mode
+    ex.simulateAgent       = false; % T:Stimuli chosen randomly
+end
+
+%% Structure of Experiment
+
+ex.nLearningStages = 3; %3 learning stages per block for now, 1 ID & 1 ED shift
+ex.nLearningTrials = 36; %number of trials per learning stage/shift
+ex.blockLen      = ex.nLearningTrials*ex.nLearningStages;
+% Deterministic set shifts for now...
+% 4 stimuli * 2 choices, every combination occurs once/block
+ex.blocks        = 4;  % how many blocks/contexts (-> Four contexts in final exp),
+ex.blockStart    = @blockStart;
+
+%Determine blockorder and predefined ID/ED shifts
+if mod(ex.ppID, 4) == 0
+    ex.blockorder = [3 1 4 2];
+    ex.shiftOrder = [2 2 3 1 1 2 1 1 3 2 2 1;
+                     1 2 2 2 1 1 1 3 3 2 1 1];
+elseif mod(ex.ppID, 4) == 1
+    ex.blockorder = [1 3 2 4];
+    ex.shiftOrder = [1 1 2 3 3 1 2 2 1 3 3 2;
+                     1 2 2 2 1 1 2 3 3 3 2 2];
+elseif mod(ex.ppID, 4) == 2
+    ex.blockorder = [4 2 3 1];
+    ex.shiftOrder = [1 1 3 2 2 1 2 2 3 1 1 2;
+                     1 3 3 3 1 1 1 2 2 2 1 1];
+else
+    ex.blockorder = [2 4 1 3];
+    ex.shiftOrder = [1 1 2 1 1 3 1 1 2 3 3 1;
+                     2 1 1 3 2 2 1 2 2 2 1 1];
+end
+
+ex.blockStartText = {'BREAK . Press SPACE to continue';...
+    'You will start a new learning phase after this. Press SPACE to continue';};
+ex.exptStart = @exptStart;
+ex.exptStartText = {'On each trial, you will see two cards to choose from';...
+    'Each card will have certain features presented on them, some of which will give you points, while others will not';...
+    'There is always just one feature at a time that will give you points. However, this feature will not always be present on one of the cards.';...
+    'Your goal is to collect as many points as you can';...
+    };
+%input to create trials using getTrials function
+ex.dim1 = [1 2 3];
+ex.dim2 = [1 2 3];
+ex.dim3 = [1 2 3];
+if ~ex.repeatFeatures
+    repeat =0; % GetTrials will create 108 unique stimuluscombinations
+else
+    repeat = 1; %  GetTrials will create 351 unique stimuluscombinations
+end
+%function to create trialmatrix
+AllTrials = getTrials(ex.dim1, ex.dim2, ex.dim3, repeat);
+ex.Trials = AllTrials(randperm(size(AllTrials,1)),:);
+ex.trialVariables.stimulus = [1];%trial structure created above
+ex.blockVariables.context = [1 2 3 4];%4 block types
+
+%% Timing things
+
+ex.rewardPeriod         = 0.500; % seconds to show feedback for
+ex.ITI                  = 1.500; % Not used for now, but could be manipulated???
+ex.ITIJitter            = 0.100; % range of uniform jitter in seconds
+ex.foreperiod           = 0.500; % sec
+ex.foreperiodJitter     = 0.000; % range of uniform jitter distribution
+ex.delayPostChoice      = 0.2;   % Delay between choice and feedback
+%ex.delayPostFeedback    = 0.5;   % Reward presentation
+ex.postQuestionPeriod   = 0.200; %Delay between click on scale and printing value
+
+% These fields of each trial will be filled in during doTrial,
+% and reflect relevant time points and locations in t he trial.
+% and can be read and displayed on graphs during analysis.
+ex.dataFields.times  = {'startforeperiod', ...
+                        'endforeperiod',...
+                        'startchoice1',...
+                        'endChoice',...
+                        'startReward', ...
+                        'startIti',...
+                        'NewContext',...
+                        'IDShift',...
+                        'EDShift', ...
+                        'endoftrial'};
+
+rng('shuffle'); % seed the random number generator from the clock.
+%% Display params
+%general
+ex.responseLocations  = [480 540 ; 1440 540] ; % 2 response options
+ex.bgColour         = [0 0 0];         %background
+ex.fgColour         = [255 255 255];   %text colour
+
+ex.stimulusSize        = [50 50];
+%params for response indication/cards
+ex.choiceShape    = [-1 -1; 1 -1; 1 1; -1 1];
+ex.choiceSize     = [120 180]; %rectangle as 'card' to pick
+ex.choiceBg       = [192 192 192]; % grey card background
+ex.chosenOutline  = [255 255 255]; % white outline for chosen card
+
+%fatigue scale
+ex.scaleWidth = 200;
+ex.penWidth = 5;
+ex.maxClicks = 5;
+ex.scaleText = {'Not at all (0)', 'Very (100)'};
+ex.scaleQ = {'How tired do you feel?'};
+ex.contText = {'You can change your answer, or press SPACE to continue.'};
+%% Stimulus dimension/feature randomisation
+if ex.shuffleDF %if true: latin square randomisation of dimensions and features
+    if mod(ex.ppID, 3) == 0      %1   %2   %3
+        ex.stimulusDimensions = ['C', 'S', 'N'];
+        ex.stimulusColours = { [192 0 0]; [224 224 0]; [0 224 0]}; %123
+        ex.colours = ['R', 'Y','G'];  %123
+        ex.stimulusShapes = { [0 1; 1 0; 0 -1; -1 0]; [-1 1; 1 1; 0 -1]; [-1 -1; 1 -1; 1 1; -1 1]*0.9 };%231
+        ex.shapes = ['D', 'T', 'S'];% 231
+        ex.stimulusRelPos = { [0 120; 0 0; 0 -120]; [0 0]; [0 -80;0 80]};%312
+        ex.quantities = [3 1 2];%312
+    elseif mod(ex.ppID, 3) == 1  %3    %1   %2
+        ex.stimulusDimensions = ['N', 'C', 'S'];
+        ex.stimulusColours = {[0 224 0]; [192 0 0]; [224 224 0]};%3 1 2
+        ex.colours = ['G', 'R','Y']; %312
+        ex.stimulusShapes = {[-1 -1; 1 -1; 1 1; -1 1]*0.9; [0 1; 1 0; 0 -1; -1 0];[-1 1; 1 1; 0 -1]};%123
+        ex.shapes = ['S', 'D', 'T'];%123
+        ex.stimulusRelPos = {[0 -80;0 80]; [0 120; 0 0; 0 -120]; [0 0]};%231
+        ex.quantities = [2 3 1];
+    else                          %2   %3   %1
+        ex.stimulusDimensions = ['S', 'N', 'C'];
+        ex.stimulusColours = {[224 224 0]; [0 224 0]; [192 0 0]}; %231
+        ex.colours = ['Y', 'G', 'R']; %231
+        ex.stimulusShapes = {[-1 1; 1 1; 0 -1];[-1 -1; 1 -1; 1 1; -1 1]*0.9; [0 1; 1 0; 0 -1; -1 0]};%312
+        ex.shapes = ['T', 'S', 'D'];%312
+        ex.stimulusRelPos = {[0 0]; [0 -80;0 80]; [0 120; 0 0; 0 -120]};%123
+        ex.quantities = [1 2 3];
+    end
+else
+    ex.stimulusDimensions = ['S', 'C', 'N'];
+    ex.stimulusColours     = { [192 0 0]; [224 224 0]; [0 224 0] };
+    ex.colours = ['R','Y','G'];
+    ex.stimulusShapes      = {[-1 -1; 1 -1; 1 1; -1 1]*0.9 % square
+                          [0 1; 1 0; 0 -1; -1 0]       % diamond
+                          [-1 1; 1 1; 0 -1] };          % triangle
+    ex.shapes = ['S', 'D', 'T'];
+    ex.stimulusRelPos = {[0 0]; [0 -80;0 80]; [0 120; 0 0; 0 -120]};
+    ex.quantities = [1 2 3];
+end
+
+%% Values of responseType, supplied by doTrial.
+% send these values in tr.R to indicate the outcome of each trial
+ex.R_ERROR        = -99;
+ex.R_CORRECT      = 5;
+ex.R_INCORRECT    = 6;
+ex.R_ESCAPE       = -98;
+ex.R_NEEDS_REPEATING = -97;         % rerun trial immediately
+ex.R_NEEDS_REPEATING_LATER = -95;   % rerun trial at end
+ex.R_INCOMPLETE   = -96;
+
+%% Rewards and audio
+if ~ex.probReward
+    ex.probability  = 1; % how nonderterministic is the reward?
+else
+    ex.probability = 0.75; %Set to whatever probability of win you want
+end
+ex.soundFiles   = {'/media/click.wav', ... % 1: played on touching a target
+                   '/media/lose.wav', ...  % 2: played if incorrect
+                   '/media/win.wav', ...   % 3: played if win
+                   '/media/REGISTER2.wav' };    % 4: jackpot sound?
+% initialise money
+global points; points=100;
+% initialise phase counter
+global phaseN; phaseN = 1;
+%%
+%%%%%%%%%%%% RUN EXPERIMENT %%%%%%%%%%%%%
+if ~exist('params','var'), params=struct(); end
+result = RunExperiment( @doTrial, ex, params);
+
+if ex.isPilot
+    saveFile = fullfile(ex.resultFolder, ['SetShiftDifficulty_', 'pilot_', num2str(ex.ppID),'_', num2str(ex.sessionNumber),'.mat']);
+else
+    saveFile = fullfile(ex.resultFolder, ['SetShiftDifficulty_', num2str(ex.ppID), '.mat']);
+end
+save(saveFile,'result');%also save in results folder
+
+% function blockfn(scr, el, ex, tr)
+% return% remove end-of-block screens
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%% DEBUG_FAST_RUN      % uncomment this to remove all WaitSecs
+% function WaitSecs(t) %removes all waitsecs
+%     return
+
+function tr = doTrial( scr, el, ex, tr )
+%Screen('Preference', 'SkipSyncTests', 1)
+
+%% The sequenceof events for each trial
+    % 0. Load variables for this trial
+    pa = combineStruct(ex, tr);
+    global points
+    tr.points=points;
+
+    global phaseN
+    tr.phaseN = phaseN;
+
+    tr.key=[]; tr.R=pa.R_INCOMPLETE;
+
+%     if tr.trialIndex == 107
+%         keyboard
+%     end
+    %1. Determine context, characteristics and reward-relevant dimension/feature & draw
+    %fixation cross
+    tr.learningContext = pa.context;
+    if tr.learningContext == 1
+        tr.nDims  = 2;
+        tr.nFeats = 2;
+    elseif tr.learningContext == 2
+        tr.nDims  = 2;
+        tr.nFeats = 3;
+    elseif tr.learningContext == 3
+        tr.nDims  = 3;
+        tr.nFeats = 2;
+    elseif tr.learningContext == 4
+        tr.nDims  = 3;
+        tr.nFeats = 3;
+    end
+
+    % get the reward-relevant dimension and feature for this trial
+    tr.relevantDimension = pa.shiftOrder(1, tr.phaseN); %predetermined in ex
+    tr.targetDim = pa.stimulusDimensions(tr.relevantDimension); %store dim code in results
+    tr.relevantFeature = pa.shiftOrder(2, tr.phaseN);%predetermined in ex
+    if tr.targetDim == 'S'
+        tr.targetFt = pa.shapes(tr.relevantFeature); %store target feature
+    elseif tr.targetDim == 'C'
+        tr.targetFt = pa.colours(tr.relevantFeature); %store target feature
+    elseif tr.targetDim == 'N'
+        tr.targetFt = pa.quantities(tr.relevantFeature); %store target feature
+    else
+        tr.targetDim = 0;
+    end
+
+     %if first trial of block -> fatigue scale
+    if mod(tr.trialIndex, pa.blockLen) == 1
+        drawScale(scr, pa, tr);
+    end
+    drawScene(scr, pa, tr, 1);
+    WaitSecs(pa.foreperiod);
+
+    %2. Determine two stimuli and draw on screen
+    tr.responseLocations = pa.responseLocations;
+    tr.stimulusCombi = pa.Trials(mod(tr.trialIndex,(2*pa.blockLen)),:);
+    tr.responseColours = [0 0];
+    tr.responseShapes = [0 0];
+    tr.responseNS = [0 0];
+    if tr.learningContext == 1 %nDims = 2, nFeats = 2(!)
+        for i = 1:size(tr.stimulusCombi, 2) %There is only 2 features, so...
+            if tr.stimulusCombi(1,i) == 3    % correct 3's in trialstructure
+                if i < 4
+                    if tr.stimulusCombi(1, i+3)>1 % if S2 corresponding feature is 2 or 3
+                        tr.stimulusCombi(1,i) = tr.stimulusCombi(1,i) -2; %change S1 to 1
+                    else                       % if S2 corresponding feature is 1
+                        tr.stimulusCombi(1,i) = tr.stimulusCombi(1,i) -1; % change S1 to 2
+                    end
+                end
+                if i > 3
+                    if tr.stimulusCombi(1, i-3)== 1 % if S1 corresponding feature is 2 or 3
+                        tr.stimulusCombi(1,i) = tr.stimulusCombi(1,i) -1; %change S1 to 1
+                    else                       % if S1 corresponding feature is 1
+                        tr.stimulusCombi(1,i) = tr.stimulusCombi(1,i) -2; % change S1 to 2
+                    end
+                end
+            end
+        end
+        tr.nRep = 0; % count number of features that is repeated/shared across stimuli
+        for dim = 1:tr.nDims
+            if pa.stimulusDimensions(dim) == 'S'
+                tr.responseShapes(1) = tr.stimulusCombi(1,dim);
+                tr.responseShapes(2) = tr.stimulusCombi(1,dim+3);
+                tr.nRep = tr.nRep + (tr.responseShapes(1) == tr.responseShapes(2)); % repeated features?
+            elseif pa.stimulusDimensions(dim) == 'C'
+                tr.responseColours(1) = tr.stimulusCombi(1,dim);
+                tr.responseColours(2) = tr.stimulusCombi(1,dim+3);
+                tr.nRep = tr.nRep + (tr.responseColours(1) == tr.responseColours(2));
+            elseif pa.stimulusDimensions(dim) == 'N'
+                tr.responseNS(1) = tr.stimulusCombi(1,dim);
+                tr.responseNS(2) = tr.stimulusCombi(1,dim+3);
+                tr.nRep = tr.nRep + (tr.responseNS(1) == tr.responseNS(2));
+           end
+        end
+        %Set the third dimension to be fixed.
+        if pa.stimulusDimensions(3) == 'S'
+            tr.responseShapes = [1 1];
+        elseif pa.stimulusDimensions(3) == 'C'
+            tr.responseColours = [1 1];
+        elseif pa.stimulusDimensions(3) == 'N'
+            tr.responseNS = [1 1];
+        end
+        tr.nRep % test
+    elseif tr.learningContext == 2 %nDims = 2, nFeats = 3, no need to correct ...
+        tr.nRep = 0;% count repeated
+        for dim = 1:tr.nDims        %... the 3's in trial struct, only use index 1:2 and 4:5
+            if pa.stimulusDimensions(dim) == 'S'
+                tr.responseShapes(1) = tr.stimulusCombi(1,dim);
+                tr.responseShapes(2) = tr.stimulusCombi(1,dim+3);
+                tr.nRep = tr.nRep + (tr.responseShapes(1) == tr.responseShapes(2));
+            elseif pa.stimulusDimensions(dim) == 'C'
+                tr.responseColours(1) = tr.stimulusCombi(1,dim);
+                tr.responseColours(2) = tr.stimulusCombi(1,dim+3);
+                tr.nRep = tr.nRep + (tr.responseColours(1) == tr.responseColours(2));
+            elseif pa.stimulusDimensions(dim) == 'N'
+                tr.responseNS(1) = tr.stimulusCombi(1,dim);
+                tr.responseNS(2) = tr.stimulusCombi(1,dim+3);
+                tr.nRep = tr.nRep + (tr.responseNS(1) == tr.responseNS(2));
+            end
+        end
+        tr.nRep % test
+        %Set dimension 3 to be fixed
+        if pa.stimulusDimensions(3) == 'S'
+            tr.responseShapes = [1 1];
+        elseif pa.stimulusDimensions(3) == 'C'
+            tr.responseColours = [1 1];
+        elseif pa.stimulusDimensions(3) == 'N'
+            tr.responseNS = [1 1];
+        end
+
+    elseif tr.learningContext == 3%nDims = 3, nFeats = 2(!)
+        for i = 1:size(tr.stimulusCombi, 2)%nFeats = 2, so correct...
+            if tr.stimulusCombi(1,i) == 3   % the 3's in trial struct
+                if i < 4
+                    if tr.stimulusCombi(1, i+3)>1 % if S2 corresponding feature is 2 or 3
+                        tr.stimulusCombi(1,i) = tr.stimulusCombi(1,i) -2; %change S1 to 1
+                    else                       % if S2 corresponding feature is 1
+                        tr.stimulusCombi(1,i) = tr.stimulusCombi(1,i) -1; % change S1 to 2
+                    end
+                end
+                if i > 3
+                    if tr.stimulusCombi(1, i-3)== 1 % if S1 corresponding feature is 2 or 3
+                        tr.stimulusCombi(1,i) = tr.stimulusCombi(1,i) -1; %change S1 to 1
+                    else                       % if S1 corresponding feature is 1
+                        tr.stimulusCombi(1,i) = tr.stimulusCombi(1,i) -2; % change S1 to 2
+                    end
+                end
+            end
+        end
+        tr.nRep = 0; % count repeats
+        for dim = 1:tr.nDims
+            if pa.stimulusDimensions(dim) == 'S'
+                tr.responseShapes(1) = tr.stimulusCombi(1,dim);
+                tr.responseShapes(2) = tr.stimulusCombi(1,dim+3);
+                tr.nRep = tr.nRep + (tr.responseShapes(1) == tr.responseShapes(2));
+            elseif pa.stimulusDimensions(dim) == 'C'
+                tr.responseColours(1) = tr.stimulusCombi(1,dim);
+                tr.responseColours(2) = tr.stimulusCombi(1,dim+3);
+                tr.nRep = tr.nRep + (tr.responseColours(1) == tr.responseColours(2));
+            elseif pa.stimulusDimensions(dim) == 'N'
+                tr.responseNS(1) = tr.stimulusCombi(1,dim);
+                tr.responseNS(2) = tr.stimulusCombi(1,dim+3);
+                tr.nRep = tr.nRep + (tr.responseNS(1) == tr.responseNS(2));
+            end
+        end
+        %nDims =3, so no need to fix third dimension
+        tr.nRep
+    %Context 4
+    elseif tr.learningContext == 4 %nDim s =  3, nFeats =3, thus no corrections needed
+        tr.nRep = 0;
+        for dim = 1:tr.nDims
+            if pa.stimulusDimensions(dim) == 'S'
+                tr.responseShapes(1) = tr.stimulusCombi(1,dim);
+                tr.responseShapes(2) = tr.stimulusCombi(1,dim+3);
+                tr.nRep = tr.nRep + (tr.responseShapes(1) == tr.responseShapes(2));
+            elseif pa.stimulusDimensions(dim) == 'C'
+                tr.responseColours(1) = tr.stimulusCombi(1,dim);
+                tr.responseColours(2) = tr.stimulusCombi(1,dim+3);
+                tr.nRep = tr.nRep + (tr.responseColours(1) == tr.responseColours(2));
+            elseif pa.stimulusDimensions(dim) == 'N'
+                tr.responseNS(1) = tr.stimulusCombi(1,dim);
+                tr.responseNS(2) = tr.stimulusCombi(1,dim+3);
+                tr.nRep = tr.nRep + (tr.responseNS(1) == tr.responseNS(2));
+            end
+        end
+        tr.nRep
+    end
+
+    if pa.repeatFeatures % for feature repeats, ensure relevant feature is not repeated
+        if pa.stimulusDimensions(tr.relevantDimension) == 'S'
+            if tr.responseShapes(1) == tr.responseShapes(2)
+                if tr.responseShapes(1) > 1
+                    tr.responseShapes(2) = tr.responseShapes(2) -1;
+                else
+                    tr.responseShapes(1) = tr.responseShapes(1) +1;
+                end
+            end
+        elseif pa.stimulusDimensions(tr.relevantDimension) == 'C'
+            if tr.responseColours(1) == tr.responseColours(2)
+                if tr.responseColours(1) > 1
+                    tr.responseColours(2) = tr.responseColours(2) -1;
+                else
+                    tr.responseColours(1) = tr.responseColours(1) +1;
+                end
+            end
+        elseif pa.stimulusDimensions(tr.relevantDimension) == 'N'
+            if tr.responseNS(1) == tr.responseNS(2)
+                if tr.responseNS(1) > 1
+                    tr.responseNS(2) = tr.responseNS(2) -1;
+                else
+                    tr.responseNS(1)  = tr.responseNS(1) +1;
+                end
+            end
+        end
+        % Check how many features were repeated
+        tr.nRep = 0;
+        for dim = 1:tr.nDims
+            if pa.stimulusDimensions(dim) == 'S'
+                tr.nRep = tr.nRep + (tr.responseShapes(1) == tr.responseShapes(2));
+            elseif pa.stimulusDimensions(dim) == 'C'
+                tr.nRep = tr.nRep + (tr.responseColours(1) == tr.responseColours(2));
+            elseif pa.stimulusDimensions(dim) == 'N'
+                tr.nRep = tr.nRep + (tr.responseNS(1) == tr.responseNS(2));
+            end
+        end
+        tr.nRep
+    end
+
+    drawScene(scr, pa,tr,2);
+
+    % get touch or mouse click
+    if(pa.useMouse)
+      ShowCursor;
+    end
+    tr.choice1 = 0;
+    tr=LogEvent(pa, el, tr,'startCards');
+    if ~ex.DEBUG_FAST_RUN
+      SetMouse(scr.centre(1), scr.centre(2)); % move hidden mouse to centre of screen
+    end
+    while ~tr.choice1
+      [z z kcode]=KbCheck(pa.deviceNumber);
+      if kcode(27); tr.R=pa.R_ESCAPE; return; end
+      [x y b]=GetMouse;
+      if(any(b)) || 1 % ignore click events, use only cursor location
+        for i=1:size(pa.responseLocations,1) % for each stimulus
+          d=norm( [x y]-(pa.responseLocations(i,:)) );%euclidian distance between mouse and responselocation
+          if(d<norm(pa.stimulusSize)) || kcode(pa.keys(i)) %arrow keys if no mouse
+            tr.choice1 = i;
+          end
+        end
+      end
+      if ex.simulateAgent
+        tr.choice1 = 1+(rand>0.5);
+      end
+    end
+
+    % record choice
+    tr=LogEvent(pa, el, tr,'endChoice');
+    tr.choiceLocation = pa.responseLocations(tr.choice1,:);
+    tr.choiceCoords   = [x y b];
+    tr.chosenShape = tr.responseShapes(tr.choice1);
+    tr.chosenColour = tr.responseColours(tr.choice1);
+    tr.chosenNS = tr.responseNS(tr.choice1);
+%     ap=audioplayer(scr.soundData{1}, scr.soundFs{1});     play(ap); % click
+    drawScene(scr,pa,tr,3);   % show chosen choice
+    play(scr.soundPlayer{1}); % click
+    WaitSecs(pa.delayPostChoice);
+
+    %Determine outcome (want a function for this?)
+    if pa.stimulusDimensions(tr.relevantDimension) == 'S'
+        tr.correct  = tr.responseShapes(tr.choice1) == tr.relevantFeature;
+    elseif pa.stimulusDimensions(tr.relevantDimension) == 'C'
+        tr.correct  = tr.responseColours(tr.choice1) == tr.relevantFeature;
+    elseif pa.stimulusDimensions(tr.relevantDimension) == 'N'
+        tr.correct  = tr.responseNS(tr.choice1) == tr.relevantFeature;
+    else
+        tr.correct = 999;
+    end
+    if tr.correct       tr.win = rand < pa.probability;     % calculate win or not
+    else                tr.win = rand > pa.probability; end
+    %To take away points for wrong answer, use below
+%     else                tr.win = -(rand < pa.probability); end
+    tr.winnings = tr.win;
+    drawScene(scr,pa,tr,4);                               % show outcome
+    tr=LogEvent(pa, el, tr,'startReward');
+    if ~pa.simulateAgent %only play sounds if there is an actual subject
+%         ap=audioplayer(scr.soundData{tr.win+2}, scr.soundFs{tr.win+2}); % sound 2 = lose, 3 = win
+%         play(ap);   WaitSecs(1);
+        play(scr.soundPlayer{tr.win+2})
+    end
+    WaitSecs(pa.rewardPeriod)  % Time to show feedback
+
+    if pa.useMouse,     HideCursor; end
+    tr=LogEvent(pa, el, tr,'startITI');
+    points=points+tr.winnings;
+
+    %check & record whether target was present on this trial
+    isTarget = [0 0];
+    for i=1:length(tr.responseLocations)
+        if pa.stimulusDimensions(tr.relevantDimension) == 'S'
+            isTarget(1,i)  = tr.responseShapes(i) == tr.relevantFeature;
+        elseif pa.stimulusDimensions(tr.relevantDimension) == 'C'
+            isTarget(1,i)  = tr.responseColours(i) == tr.relevantFeature;
+        elseif pa.stimulusDimensions(tr.relevantDimension) == 'N'
+            isTarget(1,i)  = tr.responseNS(i) == tr.relevantFeature;
+        end
+    end
+    tr.isTargetPresent = sum(isTarget);
+
+    %update phase
+    if mod(tr.trialIndex,pa.nLearningTrials) == 0
+        phaseN = phaseN + 1;
+        if mod(phaseN, pa.nLearningStages) == 1
+            tr = LogEvent(pa,el,tr, 'NewContext');
+        elseif mod(phaseN, pa.nLearningStages) == 2
+            tr = LogEvent(pa,el,tr, 'IDShift');
+        else
+            tr = LogEvent(pa,el,tr, 'EDShift');
+        end
+    end
+    WaitSecs(pa.foreperiod)
+    tr.R=1; % trial is complete
+
+function drawScene(scr,pa,tr,stage)
+%% How to draw a particular stage of the trial
+    %keep track of points on top of screen
+    Screen('TextSize',scr.w,40);
+    drawTextCentred(scr, sprintf('Points: %0.2f', tr.points) ...
+      , pa.fgColour, scr.centre-[0 0.4*scr.ssz(2)]);
+
+    %UNCOMMENT for debugging/testing: print relevant dim/feat and phase
+%     Screen('TextSize',scr.w,40);
+%     drawTextCentred(scr, sprintf('TargetDIM: %0.2f', tr.targetDim) ...
+%       , pa.fgColour, scr.centre-[-0.2*scr.ssz(1) 0.3*scr.ssz(2)]);
+%     drawTextCentred(scr, sprintf('TargetFT: %0.2f', tr.targetFt) ...
+%       , pa.fgColour, scr.centre-[-0.2*scr.ssz(1) 0.2*scr.ssz(2)]);
+%     drawTextCentred(scr, sprintf('Context: %0.2f', tr.learningContext) ...
+%       , pa.fgColour, scr.centre-[0.2*scr.ssz(1) 0.3*scr.ssz(2)]);
+%     drawTextCentred(scr, sprintf('Phase: %0.2f', tr.phaseN) ...
+%       , pa.fgColour, scr.centre-[0.2*scr.ssz(1) 0.2*scr.ssz(2)]);
+
+
+    %Draw card backgorunds and fixation cross during foreperiod
+    for i = 1:length(pa.responseLocations)
+        chSz = pa.choiceSize;
+        sh = pa.choiceShape.* chSz;
+        hpos = sh(:,1) + pa.responseLocations(i,1);
+        vpos = sh(:,2) + pa.responseLocations(i,2);
+        Screen('FillPoly', scr.w,  pa.choiceBg, [hpos vpos]);
+    end
+    if stage == 1
+        Screen('TextSize',scr.w,40);
+        drawTextCentred(scr, sprintf('+'), pa.fgColour, scr.centre);
+    end
+
+    % draw stumulus L and R
+    if stage > 1
+        for i=1:size(pa.responseLocations,1)
+            relpos = cell2mat(pa.stimulusRelPos(tr.responseNS(i)));
+            for s = 1:size(relpos,1)
+                sz = pa.stimulusSize;
+                sh = cell2mat(pa.stimulusShapes(tr.responseShapes(i))).*sz;
+                hpos = sh(:,1) + pa.responseLocations(i, 1) + relpos(s,1);
+                vpos = sh(:,2) + pa.responseLocations(i, 2) + relpos(s,2 );
+                Screen('FillPoly', scr.w,  cell2mat(pa.stimulusColours(tr.responseColours(i))), [hpos vpos]);
+            end
+        end
+    end
+
+    % draw selected response
+    if stage >2
+        chSz = pa.choiceSize;
+        sh = pa.choiceShape.* chSz;
+        hpos = sh(:,1) + pa.responseLocations(tr.choice1,1);
+        vpos = sh(:,2) + pa.responseLocations(tr.choice1,2);
+        Screen('FramePoly', scr.w, pa.chosenOutline, [hpos vpos] , 10);
+    end
+
+    % draw outcome
+    Screen('TextSize',scr.w,27);
+    if stage>3
+
+        if     (tr.winnings>0)  text=sprintf('Win:  +%0.2f!',tr.winnings);
+        else                    text='Lose.';
+        end
+        drawTextCentred(scr, text, pa.fgColour, scr.centre)
+    end
+    Screen('Flip',scr.w);
+
+
+function drawScale(scr, pa, tr)
+
+%% Draw fatigue scale on first trial of every block
+
+    drawTextCentred(scr, pa.scaleQ{1}, pa.fgColour, scr.centre-[0 0.2*scr.ssz(2)]);
+    drawTextCentred(scr, pa.scaleText{1}, pa.fgColour, scr.centre+[-pa.scaleWidth -50]);
+    drawTextCentred(scr, pa.scaleText{2}, pa.fgColour, scr.centre+[pa.scaleWidth -50]);
+    Screen('DrawLine', scr.w, pa.fgColour, scr.centre(1)-pa.scaleWidth, scr.centre(2), scr.centre(1)+pa.scaleWidth, scr.centre(2), pa.penWidth);
+    Screen('Flip', scr.w);
+
+    % wait for mouse click
+    decision = 0;
+    while ~decision
+        [z z kcode]=KbCheck;
+        if kcode(27) ; tr.R= pa.R_ESCAPE; retu rn; end
+        x=nan; b=0;
+        ShowCursor Arrow;
+        [x,y,b]=GetMouse;
+        if any(b)
+            drawTextCentred(scr, pa.scaleQ{1}, pa.fgColour, scr.centre-[0 0.2*scr.ssz(2)]);
+            drawTextCentred(scr, pa.scaleText{1}, pa.fgColour, scr.centre+[-pa.scaleWidth -50]);
+            drawTextCentred(scr , pa.scaleText{2}, pa.fgColour, scr.centre+[pa.scaleWidth -50]);
+            Screen('DrawLine', scr.w, pa.fgColour, scr.centre(1)-pa.scaleWidth, scr.centre(2), scr.centre(1)+pa.scaleWidth, scr.centre(2), pa.penWidth);
+            Screen('FillRect', scr.w, [255,0,0], [x-5,scr.ssz(2)/2-25,x+5,scr.ssz(2)/2+25]);
+%             ap=audioplayer(scr.soundData{1}, scr.soundFs{1});
+%             play(ap);
+            play(scr.soundPlayer{1})
+            p=round((x-(scr. centre(1)-200))/4);
+            drawTextCentred(scr, num2str(p), pa.fgColour, scr.centre-[0 -0.03*scr.ssz(2)]);
+            drawTextCentred(scr, pa.contText{1}, pa.fgColour, scr.centre-[0 -0.15*scr.ssz(2)]);
+            Screen('Flip', scr.w);
+        end
+        if kcode(32)
+            decision = 1;
+        end
+    end
+    tr.fatigue=p;
+
+function exptStart(scr, el, ex, tr)
+% called at start of experiment - displays instructions, cell by cell
+
+    for i = 1:length(ex.exptStartText)%for each cell in exptStartText
+        KbReleaseWait();%wait until keys released
+        DrawFormattedText(scr.w, ex.exptStartText{i},'center','center', ex.fgColour,50,[],[],2);
+        Screen('Flip',scr.w);
+        KbWait(ex.deviceNumber);
+        KbReleaseWait();%wait until keys released
+
+    end
+
+function blockStart(scr, el, ex, tr)
+% called at start of block - displays reward schedule for this block
+
+    tr.vbl.startBreak = Screen('Flip',scr.w);
+
+    if tr.block >1
+        for i=1:length(ex.blockStartText)
+             drawTextCentred(scr, ex.blockStartText{i}, ex.fgColour);
+            Screen('Flip',scr.w);
+            if i ==1
+                WaitSecs(5);
+            end
+            KbWait(ex.deviceNumber);
+            KbReleaseWait();%wait until keys released
+        end
+    end
